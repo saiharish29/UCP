@@ -13,7 +13,11 @@ const server = new Server(
 async function apiCall(endpoint, method = 'GET', body = null) {
   const options = {
     method,
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 
+      'Content-Type': 'application/json',
+      'request-id': `req_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      'UCP-Agent': 'mcp-flower-shop/1.0.0'
+    }
   };
   if (body) options.body = JSON.stringify(body);
   
@@ -47,7 +51,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'create_checkout',
-        description: 'Create checkout with flowers',
+        description: 'Create checkout with flowers. Requires buyer email and full name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -62,19 +66,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 required: ['product_id', 'quantity']
               }
             },
-            buyer_email: { type: 'string' }
+            buyer_email: { type: 'string', description: 'Buyer email address' },
+            buyer_name: { type: 'string', description: 'Buyer full name' }
           },
           required: ['line_items']
         }
       },
       {
         name: 'update_checkout',
-        description: 'Update checkout (add email or change items)',
+        description: 'Update checkout (add email/name or change items)',
         inputSchema: {
           type: 'object',
           properties: {
             checkout_id: { type: 'string' },
             buyer_email: { type: 'string' },
+            buyer_name: { type: 'string' },
             line_items: { 
               type: 'array',
               items: {
@@ -138,21 +144,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         currency: 'USD'
       };
       
-      if (args.buyer_email) {
-        body.buyer = { email: args.buyer_email };
+      if (args.buyer_email || args.buyer_name) {
+        body.buyer = {};
+        if (args.buyer_email) body.buyer.email = args.buyer_email;
+        if (args.buyer_name) body.buyer.full_name = args.buyer_name;
       }
       
       const checkout = await apiCall('/api/checkout-sessions', 'POST', body);
       
       let text = `✅ Checkout Created!\n\nID: ${checkout.id}\nStatus: ${checkout.status}\n\n`;
-      text += '🛒 Cart:\n';
+      
+      if (checkout.buyer?.email) {
+        text += `📧 Email: ${checkout.buyer.email}\n`;
+      }
+      if (checkout.buyer?.full_name) {
+        text += `👤 Name: ${checkout.buyer.full_name}\n`;
+      }
+      
+      text += '\n🛒 Cart:\n';
       checkout.line_items.forEach(item => {
         text += `  ${item.quantity}x ${item.item.title} - $${(item.item.price * item.quantity / 100).toFixed(2)}\n`;
       });
       text += `\n💰 Total: $${(checkout.totals.find(t => t.type === 'total').amount / 100).toFixed(2)}\n`;
       
       if (checkout.messages.length > 0) {
-        text += '\n⚠️ ' + checkout.messages[0].content;
+        text += '\n⚠️ Missing information:\n';
+        checkout.messages.forEach(msg => {
+          text += `  - ${msg.content}\n`;
+        });
       }
       
       return { content: [{ type: 'text', text }] };
@@ -161,8 +180,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'update_checkout') {
       const body = { currency: 'USD' };
       
-      if (args.buyer_email) {
-        body.buyer = { email: args.buyer_email };
+      if (args.buyer_email || args.buyer_name) {
+        body.buyer = {};
+        if (args.buyer_email) body.buyer.email = args.buyer_email;
+        if (args.buyer_name) body.buyer.full_name = args.buyer_name;
       }
       
       if (args.line_items) {
@@ -175,10 +196,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const checkout = await apiCall(`/api/checkout-sessions/${args.checkout_id}`, 'PUT', body);
       
       let text = `✅ Checkout Updated!\n\nStatus: ${checkout.status}\n\n`;
+      
       if (checkout.buyer?.email) {
-        text += `📧 Email: ${checkout.buyer.email}\n\n`;
+        text += `📧 Email: ${checkout.buyer.email}\n`;
       }
-      text += '🛒 Cart:\n';
+      if (checkout.buyer?.full_name) {
+        text += `👤 Name: ${checkout.buyer.full_name}\n`;
+      }
+      
+      text += '\n🛒 Cart:\n';
       checkout.line_items.forEach(item => {
         text += `  ${item.quantity}x ${item.item.title} - $${(item.item.price * item.quantity / 100).toFixed(2)}\n`;
       });
@@ -186,6 +212,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       
       if (checkout.status === 'ready_for_complete') {
         text += '\n✨ Ready to complete!';
+      } else if (checkout.messages.length > 0) {
+        text += '\n⚠️ Missing information:\n';
+        checkout.messages.forEach(msg => {
+          text += `  - ${msg.content}\n`;
+        });
       }
       
       return { content: [{ type: 'text', text }] };
@@ -195,10 +226,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const checkout = await apiCall(`/api/checkout-sessions/${args.checkout_id}`);
       
       let text = `📋 Checkout: ${checkout.id}\n\nStatus: ${checkout.status}\n\n`;
+      
       if (checkout.buyer?.email) {
-        text += `📧 Email: ${checkout.buyer.email}\n\n`;
+        text += `📧 Email: ${checkout.buyer.email}\n`;
       }
-      text += '🛒 Cart:\n';
+      if (checkout.buyer?.full_name) {
+        text += `👤 Name: ${checkout.buyer.full_name}\n`;
+      }
+      
+      text += '\n🛒 Cart:\n';
       checkout.line_items.forEach(item => {
         text += `  ${item.quantity}x ${item.item.title} - $${(item.item.price * item.quantity / 100).toFixed(2)}\n`;
       });
